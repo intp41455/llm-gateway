@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "多模型 LLM 网关 · 组件架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1160, 700],
+    "output": "docs/architecture.html"
+  },
+  "components": [
+    { "id": "clients", "type": "external", "label": "AI 客户端", "sublabel": "Claude Code / Codex / 脚本", "pos": [30, 300], "size": [132, 62] },
+    { "id": "gateway", "type": "backend", "label": "网关入口", "sublabel": "/v1/chat/completions", "pos": [232, 300], "size": [140, 62] },
+    { "id": "router", "type": "backend", "label": "路由内核", "sublabel": "别名解析 · 降级编排", "pos": [444, 300], "size": [140, 62], "tag": "route.py" },
+    { "id": "fallback", "type": "backend", "label": "候选链降级", "sublabel": "有序重试 · 指数退避", "pos": [656, 300], "size": [140, 62] },
+    { "id": "providers", "type": "cloud", "label": "模型供应商", "sublabel": "DeepSeek / 通义 / OpenAI", "pos": [870, 300], "size": [150, 62] },
+
+    { "id": "breaker", "type": "security", "label": "三态熔断器", "sublabel": "CLOSED / OPEN / HALF_OPEN", "pos": [444, 130], "size": [150, 62], "tag": "连败 3 次跳开" },
+    { "id": "config", "type": "database", "label": "供应商配置", "sublabel": "providers.yaml", "pos": [656, 130], "size": [140, 62], "tag": "密钥走环境变量" },
+
+    { "id": "mcp", "type": "messagebus", "label": "MCP 注册表", "sublabel": "单一事实来源", "pos": [232, 480], "size": [140, 62] },
+    { "id": "memory", "type": "database", "label": "记忆分层", "sublabel": "规则 / 记忆 / 资料", "pos": [444, 480], "size": [140, 62] },
+    { "id": "quota", "type": "database", "label": "额度记账", "sublabel": "供应商 × 调用方 × 自然日", "pos": [656, 480], "size": [160, 62], "tag": "超限直接 429" }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "网关进程（无状态，可水平扩展）", "wraps": ["gateway", "router", "fallback", "breaker", "config", "mcp", "memory", "quota"] }
+  ],
+  "connections": [
+    { "id": "clients-gateway", "from": "clients", "to": "gateway", "label": "OpenAI 兼容协议", "variant": "emphasis", "labelDy": 55 },
+    { "id": "gateway-router", "from": "gateway", "to": "router", "label": "解析别名" },
+    { "id": "router-breaker", "from": "router", "to": "breaker", "label": "是否放行", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "id": "router-fallback", "from": "router", "to": "fallback", "label": "逐级降级" },
+    { "id": "fallback-providers", "from": "fallback", "to": "providers", "label": "带退避重试", "variant": "emphasis" },
+    { "id": "config-fallback", "from": "config", "to": "fallback", "label": "候选链顺序", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "fallback-quota", "from": "fallback", "to": "quota", "label": "落账", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "mcp-clients", "from": "mcp", "to": "clients", "label": "渲染各客户端配置", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "memory-router", "from": "memory", "to": "router", "label": "注入上下文", "variant": "dashed", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "解决四个真实问题",
+      "items": [
+        "供应商挂了 Agent 直接报错 → 别名挂有序候选链，逐级重试",
+        "某个 key 挂了每个请求白等 60s → 连败 3 次熔断，30 秒后半开试探",
+        "不知道今天花了多少钱 → 三维记账，超限返回 429 而不降级",
+        "加一个 MCP server 要改 N 个客户端 → 一份注册表渲染所有配置"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "工程约束",
+      "items": [
+        "84 例 pytest，全部离线可跑（注入假 provider，不发真实请求）",
+        "密钥一律从环境变量读，配置文件里不落明文",
+        "Dockerfile 以非 root 用户运行"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "已知边界",
+      "items": [
+        "熔断状态在进程内存，多实例部署需接 Redis 共享",
+        "额度记账是本地落账，未接账单系统对账"
+      ]
+    }
+  ]
+}
